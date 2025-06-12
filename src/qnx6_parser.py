@@ -80,7 +80,7 @@ class QNX6Parser():
 
     def parseQNX6(self):
         partitions = self.get_all_partitions()
-        for index in range(10, 11):
+        for index in range(14, 15):
             print(partitions[index])
             self.parse_partition(partitions[index])
             print("=" * 50)
@@ -178,6 +178,25 @@ class QNX6Parser():
             if len(long_file.filename) < 510:    
                 self.long_files.append(long_file)
         
+        # file_map = defaultdict(list)
+        # for file in self.files:
+        #     file_map[file.parent_id].append(file)
+        # for id, array in file_map.items():
+        #     for file in array:
+        #         print(f"{id}: {file.filename}")
+        #print(self.files)
+        #print(file_map)
+        file_map = {file.file_id: file for file in self.files}
+        paths = {}
+        for f in self.files:
+            paths[f.file_id] = self.build_paths(file_map, f)
+            
+
+        # Print all file paths
+        for fid, path in paths.items():
+            print(f"ID {fid}: {path}")
+            
+        
         # counter = 0
         # for longfile in self.long_files:
         #     print(f"filename={longfile.filename}")
@@ -189,7 +208,19 @@ class QNX6Parser():
         
         #self.parse_specific_inodes(inodes, 1, self.inodes_map, superblock_endoffset, 2)
         #self.construct(self.inodes_map, self.long_names_map, directories, long_dirs, superblock_end_offset)
-        
+    
+    def build_paths(self, file_map, file_obj):
+        parts = [file_obj.filename]
+        current = file_map.get(file_obj.parent_id)
+
+        while current:
+            parts.insert(0, current.filename)
+            if current.parent_id not in file_map:
+                break  # We've reached the missing root
+            current = file_map.get(current.parent_id)
+
+        return os.path.join(*parts)
+    
     def build_inode_map(self, inodes):
         return {i.index: i for i in inodes}
     

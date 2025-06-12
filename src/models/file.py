@@ -13,6 +13,7 @@ class File():
         self.__f_stream = f_stream
         self.__superblock_endoffset = offset
         
+        self.parent_id = self.__dir_entry.parent_inode
         self.file_id = self.__inode.index
         self.filename = self.__dir_entry.name
         self.created_time = self.fmt(self.__inode.ctime)
