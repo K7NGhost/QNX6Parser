@@ -1,3 +1,4 @@
+from datetime import datetime
 from io import BufferedReader
 import struct
 from models.dir_entry import DirEntry
@@ -14,10 +15,26 @@ class File():
         
         self.file_id = self.__inode.index
         self.filename = self.__dir_entry.name
+        self.created_time = self.fmt(self.__inode.ctime)
+        self.modified_time = self.fmt(self.__inode.mtime)
+        self.accessed_time = self.fmt(self.__inode.atime)
         self.file_data = self.get_data_from_inode(self.__inode)
         
         #self.__f_stream.close()
         
+    def __repr__(self):
+        return (
+            f"<File "
+            f"id={self.file_id}, "
+            f"name='{self.filename}', "
+            f"size={len(self.file_data)} bytes, "
+            f"created='{self.created_time}', "
+            f"modified='{self.modified_time}', "
+            f"accessed='{self.accessed_time}'>"
+        )
+    
+    def fmt(self, ts):
+            return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
     
     def get_data_from_inode(self, inode: iNode):
         file_blocks = []
