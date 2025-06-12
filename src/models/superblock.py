@@ -32,6 +32,6 @@ class SuperBlock():
 
     def __repr__(self):
         return (
-            f"<SuperBlock magic=0x{self.magic:X}, volumeid={self.volumeid}, "
+            f"<SuperBlock magic=0x{self.magic:X}, volumeid={self.volumeid}, serial={self.serial}, "
             f"block_size={self.block_size}, inodes={self.num_of_inodes}, blocks={self.num_of_blocks}>"
         )

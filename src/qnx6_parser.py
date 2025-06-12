@@ -5,9 +5,11 @@ from datetime import datetime
 from collections import defaultdict
 import re
 
-from models.dir_entry import dir_entry
+from models.dir_entry import DirEntry
+from models.file import File
 from models.inode import iNode
 from models.long_dir_entry import LongDirEntry
+from models.long_file import LongFile
 from models.long_name_inode import LongNameiNode
 from models.partition import Partition
 from models.rootnode import RootNode
@@ -120,7 +122,7 @@ class QNX6Parser():
         with open("long_inodes_output.txt", "w", encoding="utf-8") as f:
             for long_inode in long_names:
                 f.write(repr(f"index={long_inode.index} name={long_inode.name}"))
-                f.write("\n\n")
+                f.write("\n")
         #self.parse_longfilenames(long_names, 7, long_names_map, superblock_end_offset)
         
         directories, long_dirs = self.parse_dir_entries(inodes, superblock_end_offset)
@@ -135,7 +137,41 @@ class QNX6Parser():
                 f.write("\n")
         self.dir_map = self.build_dir_map(directories)
         
-        self.construct(self.inodes_map, self.long_names_map, directories, long_dirs, superblock_end_offset)
+        self.files = []
+        for dir in directories:
+            if dir.inode_number == 0:
+                continue
+            inode = self.inodes_map[dir.inode_number]
+            if inode:
+                file = File(dir, inode, self.f_stream, self.superblock.block_size, superblock_end_offset)
+                self.files.append(file)
+        
+        # print(f"Amount of files processed {len(self.files)}")
+        # for file in self.files:
+        #     print(f"filename={file.filename}")
+        #     if file.filename == "vp4_update_logs.csv":
+        #         print(file.file_data)
+        #     else:
+        #         print("File does not exist")
+                
+        self.long_files = []
+        for dir in long_dirs:
+            if dir.inode_number == 0:
+                continue
+            inode = self.inodes_map[dir.inode_number]
+            long_inode = self.long_names_map[dir.long_file_inumber]
+            if inode and long_inode:
+                long_file = LongFile(dir, inode, long_inode, self.f_stream, self.superblock.block_size, superblock_end_offset)
+                self.long_files.append(long_file)
+        
+        for longfile in self.long_files:
+            print(f"filename={longfile.filename}")
+            if longfile.filename == "vp4r_system_activity_record.csv":
+                print(longfile.file_data)
+            else:
+                print("File data not viewed")
+        print(f"Amount of long files processed {len(self.long_files)}")
+        #self.construct(self.inodes_map, self.long_names_map, directories, long_dirs, superblock_end_offset)
         
     def build_inode_map(self, inodes):
         return {i.index: i for i in inodes}
@@ -174,14 +210,15 @@ class QNX6Parser():
                     
                     chunk = block_data[i:i+32]
                     if chunk.strip(b"\x00"):
-                        longfile_entry = LongDirEntry(chunk)
-                        entry = dir_entry(chunk)
+                        entry = DirEntry(chunk)
                         if entry.name == "." or entry.name == "..":
                             continue
-                        if longfile_entry.long_file_inumber in self.long_names_map.keys():
+                        if entry.name_length > 27:
                             print("it is a long folder")
+                            longfile_entry = LongDirEntry(chunk)
                             longfile_entry.parent_inode = inode.index
-                            long_dir_entries.append(longfile_entry)
+                            if longfile_entry.long_file_inumber in self.long_names_map.keys():
+                                long_dir_entries.append(longfile_entry)
                             continue
                         print(entry)
                         entry.parent_inode = inode.index
@@ -249,9 +286,7 @@ class QNX6Parser():
                         inodes.append(long_inode)
                         inode_index += 1
                         break
-                    else:
-                        inode_index += 1
-                    if root == self.superblock.root_node_inode:
+                    elif root == self.superblock.root_node_inode:
                         inode_obj = iNode(chunk)
                         inode_obj.index = inode_index
                         if inode_obj.status not in (1, 2, 3):
@@ -260,8 +295,8 @@ class QNX6Parser():
                         inode_index += 1
                     else:
                         inode_index += 1
-                # else:
-                #     counter += 1
+                else:
+                    inode_index += 1
         print(f"Amount of pointers invalid are {counter}")
         return inodes
     
@@ -314,7 +349,7 @@ class QNX6Parser():
             for i in range(0, block_size, 32):
                 chunk = block_data[i:i+32]
                 if chunk.strip(b'\x00'):
-                    entry = dir_entry(chunk)
+                    entry = DirEntry(chunk)
                     print(f"name={entry.name} : inode_number={entry.inode_number}")
                     if entry.name == "." or entry.name == "..":
                         continue

@@ -1,7 +1,6 @@
 import struct
 
-
-class dir_entry():
+class DirEntry():
     def __init__(self, data):
         self.parent_inode = None
         (
@@ -12,4 +11,4 @@ class dir_entry():
         self.name = data[5:5 + self.name_length].decode('utf-8', errors='replace')
 
     def __repr__(self):
-        return f"<dir_entry parent_inode={self.parent_inode} inode_id={self.inode_number}, name='{self.name}'>"
+        return f"<dir_entry parent_inode={self.parent_inode} inode_id={self.inode_number}, length='{self.name_length}', name='{self.name}'>"
