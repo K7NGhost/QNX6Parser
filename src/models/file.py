@@ -16,10 +16,19 @@ class File():
         self.parent_id = self.__dir_entry.parent_inode
         self.file_id = self.__inode.index
         self.filename = self.__dir_entry.name
-        self.created_time = self.fmt(self.__inode.ctime)
-        self.modified_time = self.fmt(self.__inode.mtime)
-        self.accessed_time = self.fmt(self.__inode.atime)
+        self.file_size = self.__inode.size
+        self.created_time = self.__inode.ctime
+        self.modified_time = self.__inode.mtime
+        self.accessed_time = self.__inode.atime
         self.file_data = self.get_data_from_inode(self.__inode)
+        self.mode = self.__inode.mode
+        
+        if self.is_directory(self.__inode.mode):
+            self.file_type = "directory"
+        elif self.is_regular_file(self.__inode.mode):
+            self.file_type = "file"
+        else:
+            self.file_type = "Other"
         
         #self.__f_stream.close()
         
@@ -29,13 +38,19 @@ class File():
             f"id={self.file_id}, "
             f"name='{self.filename}', "
             f"size={len(self.file_data)} bytes, "
-            f"created='{self.created_time}', "
-            f"modified='{self.modified_time}', "
-            f"accessed='{self.accessed_time}'>"
+            f"created='{self.fmt(self.created_time)}', "
+            f"modified='{self.fmt(self.modified_time)}', "
+            f"accessed='{self.fmt(self.accessed_time)}'>"
         )
     
     def fmt(self, ts):
             return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+        
+    def is_directory(self, mode):
+        return (mode & 0xF000) == 0x4000
+    
+    def is_regular_file(self, mode):
+        return (mode & 0xF000) == 0x8000
     
     def get_data_from_inode(self, inode: iNode):
         file_blocks = []

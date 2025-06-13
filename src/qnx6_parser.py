@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 from collections import defaultdict
 import re
+import string
 
 from models.dir_entry import DirEntry
 from models.file import File
@@ -24,6 +25,8 @@ class QNX6Parser():
         self.file_path = file_path
         self.f_stream = open(self.file_path, "rb")
         self.superblock = None
+        self.root_folder = "extracted"
+        self.extraction_path = ""
 
     def get_all_partitions(self):
         partitions = []
@@ -80,8 +83,10 @@ class QNX6Parser():
 
     def parseQNX6(self):
         partitions = self.get_all_partitions()
-        for index in range(14, 15):
+        for index in range(0, len(partitions)):
             print(partitions[index])
+            partition_string = f"partition_{index+1}"
+            self.extraction_path = os.path.join(self.root_folder, partition_string)
             self.parse_partition(partitions[index])
             print("=" * 50)
 
@@ -101,16 +106,24 @@ class QNX6Parser():
         print(f"longfilename: {self.superblock.root_node_longfilename}")
         superblock_endoffset = superblock_offset + SUPERBLOCK_SIZE
         
-        second_superblock_offset = superblock_endoffset + (self.superblock.block_size * self.superblock.num_of_blocks)
-        self.f_stream.seek(second_superblock_offset)
-        second_superblock_data = self.f_stream.read(SUPERBLOCK_SIZE)
-        print(f"Byte Offset: {second_superblock_offset} (0x{second_superblock_offset:X})")
-        self.second_superblock = SuperBlock(second_superblock_data)
-        print(self.second_superblock)
-        print(f"inodes: {self.second_superblock.root_node_inode}")
-        print(f"bitmap: {self.second_superblock.root_node_bitmap}")
-        print(f"longfilename: {self.second_superblock.root_node_longfilename}")
-        second_superblock_endoffset = second_superblock_offset + SUPERBLOCK_SIZE
+        if self.superblock.magic != 0x68191122:
+            print("Not a QNX6 Partition")
+            return
+        
+        try:
+            
+            second_superblock_offset = superblock_endoffset + (self.superblock.block_size * self.superblock.num_of_blocks)
+            self.f_stream.seek(second_superblock_offset)
+            second_superblock_data = self.f_stream.read(SUPERBLOCK_SIZE)
+            print(f"Byte Offset: {second_superblock_offset} (0x{second_superblock_offset:X})")
+            self.second_superblock = SuperBlock(second_superblock_data)
+            print(self.second_superblock)
+            print(f"inodes: {self.second_superblock.root_node_inode}")
+            print(f"bitmap: {self.second_superblock.root_node_bitmap}")
+            print(f"longfilename: {self.second_superblock.root_node_longfilename}")
+            second_superblock_endoffset = second_superblock_offset + SUPERBLOCK_SIZE
+        except Exception as e:
+            print(e)
         
         
 
@@ -136,7 +149,6 @@ class QNX6Parser():
             for long_inode in long_names:
                 f.write(repr(f"index={long_inode.index} name={long_inode.name}"))
                 f.write("\n")
-        #self.parse_longfilenames(long_names, 7, long_names_map, superblock_end_offset)
         
         directories, long_dirs = self.parse_dir_entries(inodes, superblock_endoffset)
         print(f"Num of directories {len(directories)}")
@@ -154,7 +166,11 @@ class QNX6Parser():
         for dir in directories:
             if dir.inode_number == 0:
                 continue
-            inode = self.inodes_map[dir.inode_number]
+            try:
+                inode = self.inodes_map[dir.inode_number]
+            except Exception as e:
+                inode = None
+                print("Failed here")
             if inode:
                 file = File(dir, inode, self.f_stream, self.superblock.block_size, superblock_endoffset)
                 self.files.append(file)
@@ -171,54 +187,94 @@ class QNX6Parser():
         for dir in long_dirs:
             if dir.inode_number == 0:
                 continue
-            inode = self.inodes_map[dir.inode_number]
-            long_inode = self.long_names_map[dir.long_file_inumber]
-            
-            long_file = LongFile(dir, inode, long_inode, self.f_stream, self.superblock.block_size, superblock_endoffset)
-            if len(long_file.filename) < 510:    
-                self.long_files.append(long_file)
+            try:
+                inode = self.inodes_map[dir.inode_number]
+                long_inode = self.long_names_map[dir.long_file_inumber]
+            except Exception as e:
+                print("Failed Here")
+            if inode and long_inode:
+                long_file = LongFile(dir, inode, long_inode, self.f_stream, self.superblock.block_size, superblock_endoffset)
+                if len(long_file.filename) < 510:    
+                    self.long_files.append(long_file)
         
-        # file_map = defaultdict(list)
-        # for file in self.files:
-        #     file_map[file.parent_id].append(file)
-        # for id, array in file_map.items():
-        #     for file in array:
-        #         print(f"{id}: {file.filename}")
-        #print(self.files)
-        #print(file_map)
-        file_map = {file.file_id: file for file in self.files}
-        paths = {}
-        for f in self.files:
-            paths[f.file_id] = self.build_paths(file_map, f)
-            
-
-        # Print all file paths
-        for fid, path in paths.items():
-            print(f"ID {fid}: {path}")
-            
+        counter = 0
+        for longfile in self.long_files:
+            print(f"filename={longfile.filename}")
+            print(longfile)
+            if longfile.filename == "vp4r_system_activity_record.csv":
+                print(longfile.file_data)
+            else:
+                print("File data not viewed")
+        print(f"Amount of long files processed {len(self.long_files)}")
         
-        # counter = 0
-        # for longfile in self.long_files:
-        #     print(f"filename={longfile.filename}")
-        #     if longfile.filename == "vp4r_system_activity_record.csv":
-        #         print(longfile.file_data)
-        #     else:
-        #         print("File data not viewed")
-        # print(f"Amount of long files processed {len(self.long_files)}")
+        self.construct_files(self.files)
+        #self.construct_files(self.long_files)
         
         #self.parse_specific_inodes(inodes, 1, self.inodes_map, superblock_endoffset, 2)
-        #self.construct(self.inodes_map, self.long_names_map, directories, long_dirs, superblock_end_offset)
+        
+    def construct_files(self, files: list):
+        file_map = {file.file_id: file for file in files}
+        print(file_map.keys())
+        paths = {}
+        for f in files:
+            p = self.build_paths(file_map, f)
+            if p:
+                paths[f.file_id] = p
+        print(paths.keys())
+            
+        # Construct all files
+        for fid, path in paths.items():
+            file = file_map[fid]
+            print(f"path={path}")
+            full_path = os.path.join(self.extraction_path, path)
+            print(f"ID {fid}: {full_path}")
+            print(file)
+            print(full_path)
+
+            try:
+                
+                if file.file_type == "directory":
+                    os.makedirs(full_path, exist_ok=True)
+                    continue
+            
+                os.makedirs(os.path.dirname(full_path), exist_ok=True)
+
+                os.utime(os.path.dirname(full_path), (file.accessed_time, file.modified_time))
+                #os.chmod(full_path, 0o666)
+                try:
+                
+                    with open(full_path, 'wb') as out_file:
+                        for data in file.file_data:
+                            if data in (0, 0xFFFFFFFF):
+                                continue
+                            #cleaned_data = bytes(c for c in data if chr(c) in string.printable)
+                            out_file.write(data)
+                except Exception as e:
+                    print(e)
+            except Exception as e:
+                print(e)
+    
+    def construct_long_files(self, long_files: list):
+        return 0
     
     def build_paths(self, file_map, file_obj):
         parts = [file_obj.filename]
+        visited = set()
+        
         current = file_map.get(file_obj.parent_id)
 
         while current:
-            parts.insert(0, current.filename)
-            if current.parent_id not in file_map:
-                break  # We've reached the missing root
+            visited.add(current.file_id)
+            
+            if current != file_obj:
+                
+                parts.insert(0, current.filename)
+                if current.parent_id not in file_map:
+                    break  # We've reached the missing root
+            if current.file_id in visited:
+                print(f"Circular reference detected at ID {current.file_id}")
+                return
             current = file_map.get(current.parent_id)
-
         return os.path.join(*parts)
     
     def build_inode_map(self, inodes):
@@ -368,30 +424,6 @@ class QNX6Parser():
         print(f"Amount of pointers invalid are {counter}")
         return inodes
     
-    def parse_longfilenames(self, inode_list, inode_id, inode_map, offset):
-        inode = inode_map[inode_id]
-        block_size = self.superblock.block_size
-        pointers = inode.blockpointer_array
-        if (inode.mode & 0xF000) == 0x4000:
-            print("Type is Directory")
-        elif (inode.mode & 0xF000) == 0x8000:
-            print("Type is File")
-            long_file_size = 512
-            for ptr in pointers:
-                ptr_offset = ptr * block_size + offset
-                if ptr in (0, 0xFFFFFFFF):
-                    continue
-                self.f_stream.seek(ptr_offset)
-                block_data = self.f_stream.read(block_size)
-                for i in range(0, block_size, long_file_size):
-                    chunk = block_data[i:i+long_file_size]
-                    if chunk.strip(b'\x00'):
-                        long_inode = LongNameiNode(chunk)
-                        print(f"{long_inode.name}")
-            
-        else:
-            print("Other")
-    
     def parse_specific_inodes(self, file_names: list, inode_id, inode_map, offset, counter):
         counter += 1
         if counter > 3:
@@ -436,64 +468,13 @@ class QNX6Parser():
             #         else:
             #             print("Unknown")
 
-    def construct(self, inode_map, longname_map, dir_entries, long_dir_entries, offset):
-        resolved_map = {}
-
-        # 1. normal dir entries
-        for de in dir_entries:
-            inode = inode_map.get(de.inode_number)
-            if inode:
-                resolved_map[de.inode_number] = {"name": de.name,
-                                             "parent": de.parent_inode,
-                                             "inode": inode}
-
-        # 2. long‑filename dir entries
-        for lde in long_dir_entries:
-            inode = inode_map.get(lde.inode_number)
-            longname = longname_map.get(lde.long_file_inumber)
-            if inode and longname:
-                resolved_map[lde.inode_number] = {"name": longname.name,   # <- fixed field
-                                              "parent": lde.parent_inode,
-                                              "inode": inode}
-
-        def build_path(idx):
-            parts, seen = [], set()
-            cur = resolved_map.get(idx)
-            while cur and idx not in seen:
-                seen.add(idx)
-                parts.insert(0, cur["name"])
-                idx = cur["parent"]
-                cur  = resolved_map.get(idx)
-            return os.path.join(*parts) if parts else "__orphan__"
-
-        out_root = "extracted"
-        os.makedirs(out_root, exist_ok=True)
-
-        for idx, rec in resolved_map.items():
-            ino = rec["inode"]
-            if ino.status != 3:         # only regular files
-                continue
-
-            rel_path = build_path(idx)
-            safe_path = re.sub(r'[<>:"\\|?*]', "_", rel_path)   # Windows‑safe
-            full_path = os.path.join(out_root, safe_path)
-            os.makedirs(os.path.dirname(full_path), exist_ok=True)
-
-            with open(full_path, "wb") as f:
-                for ptr in ino.blockpointer_array:
-                    if ptr in (0, 0xFFFFFFFF):
-                        continue
-                    off = ptr * self.superblock.block_size + offset
-                    self.f_stream.seek(off)
-                    f.write(self.f_stream.read(self.superblock.block_size)[:ino.size])
-
 
     def close_stream(self):
         self.f_stream.close()
 
-file_path = r"E:\Interns Infotainment\Images\Chrysler - QNX\VP4R\image_2\24-2654 SanDisk 16GB.bin"
-file_path2 = r"E:\Interns Infotainment\Images\Chrysler - QNX\VP4R\image_1\24-2652 SanDisk 32GB.bin"
-test = QNX6Parser(file_path)
-test.parseQNX6()
+# file_path = r"E:\Interns Infotainment\Images\Chrysler - QNX\VP4R\image_2\24-2654 SanDisk 16GB.bin"
+# file_path2 = r"E:\Interns Infotainment\Images\Chrysler - QNX\VP4R\image_1\24-2652 SanDisk 32GB.bin"
+# test = QNX6Parser(file_path2)
+# test.parseQNX6()
 
         
