@@ -83,7 +83,7 @@ class QNX6Parser():
 
     def parseQNX6(self):
         partitions = self.get_all_partitions()
-        for index in range(0, len(partitions)):
+        for index in range(5, 6):
             print(partitions[index])
             partition_string = f"partition_{index+1}"
             self.extraction_path = os.path.join(self.root_folder, partition_string)
@@ -168,49 +168,50 @@ class QNX6Parser():
                 continue
             try:
                 inode = self.inodes_map[dir.inode_number]
-            except Exception as e:
-                inode = None
-                print("Failed here")
+            except:
+                continue
             if inode:
                 file = File(dir, inode, self.f_stream, self.superblock.block_size, superblock_endoffset)
                 self.files.append(file)
         
-        print(f"Amount of files processed {len(self.files)}")
-        for file in self.files:
-            print(file)
-            if file.filename == "proj_ctrl":
-                print(file.file_data)
-            else:
-                print("File does not exist")
+        # print(f"Amount of files processed {len(self.files)}")
+        # for file in self.files:
+        #     print(file)
+        #     if file.filename == "proj_ctrl":
+        #         print(file.file_data)
+        #     else:
+        #         print("File does not exist")
                 
-        self.long_files = []
-        for dir in long_dirs:
-            if dir.inode_number == 0:
-                continue
-            try:
-                inode = self.inodes_map[dir.inode_number]
-                long_inode = self.long_names_map[dir.long_file_inumber]
-            except Exception as e:
-                print("Failed Here")
-            if inode and long_inode:
-                long_file = LongFile(dir, inode, long_inode, self.f_stream, self.superblock.block_size, superblock_endoffset)
-                if len(long_file.filename) < 510:    
-                    self.long_files.append(long_file)
-        
-        counter = 0
-        for longfile in self.long_files:
-            print(f"filename={longfile.filename}")
-            print(longfile)
-            if longfile.filename == "vp4r_system_activity_record.csv":
-                print(longfile.file_data)
-            else:
-                print("File data not viewed")
-        print(f"Amount of long files processed {len(self.long_files)}")
-        
+        self.parse_specific_inodes(inodes, 24839, self.inodes_map, superblock_endoffset, 2)
         self.construct_files(self.files)
+                
+        # self.long_files = []
+        # for dir in long_dirs:
+        #     if dir.inode_number == 0:
+        #         continue
+        #     try:
+        #         inode = self.inodes_map[dir.inode_number]
+        #         long_inode = self.long_names_map[dir.long_file_inumber]
+        #     except Exception as e:
+        #         print("Failed Here")
+        #     if inode and long_inode:
+        #         long_file = LongFile(dir, inode, long_inode, self.f_stream, self.superblock.block_size, superblock_endoffset)
+        #         if len(long_file.filename) < 510:    
+        #             self.long_files.append(long_file)
+        
+        # counter = 0
+        # for longfile in self.long_files:
+        #     print(f"filename={longfile.filename}")
+        #     print(longfile)
+        #     if longfile.filename == "vp4r_system_activity_record.csv":
+        #         print(longfile.file_data)
+        #     else:
+        #         print("File data not viewed")
+        # print(f"Amount of long files processed {len(self.long_files)}")
+        
         #self.construct_files(self.long_files)
         
-        #self.parse_specific_inodes(inodes, 1, self.inodes_map, superblock_endoffset, 2)
+        #self.parse_specific_inodes(inodes, 247, self.inodes_map, superblock_endoffset, 2)
         
     def construct_files(self, files: list):
         file_map = {file.file_id: file for file in files}
@@ -264,6 +265,9 @@ class QNX6Parser():
         current = file_map.get(file_obj.parent_id)
 
         while current:
+            if current.file_id in visited:
+                print(f"Circular reference detected at ID {current.file_id}")
+                raise RuntimeError("Circular reference detected")
             visited.add(current.file_id)
             
             if current != file_obj:
@@ -271,9 +275,6 @@ class QNX6Parser():
                 parts.insert(0, current.filename)
                 if current.parent_id not in file_map:
                     break  # We've reached the missing root
-            if current.file_id in visited:
-                print(f"Circular reference detected at ID {current.file_id}")
-                return
             current = file_map.get(current.parent_id)
         return os.path.join(*parts)
     
@@ -318,11 +319,11 @@ class QNX6Parser():
                 pointers = next_pointers
                 current_levels -= 1
             
-            print(pointers)
+            #print(pointers)
             for ptr in pointers:
                 if ptr in (0, 0xFFFFFFFF):
                     continue
-                print(f"Looking at pointer {ptr}")
+                #print(f"Looking at pointer {ptr}")
                 block_offset = ptr * block_size + offset
                 self.f_stream.seek(block_offset)
                 block_data = self.f_stream.read(block_size)
@@ -337,13 +338,13 @@ class QNX6Parser():
                         if entry.name == "." or entry.name == "..":
                             continue
                         if entry.name_length > 27:
-                            print("it is a long folder")
+                            #print("it is a long folder")
                             longfile_entry = LongDirEntry(chunk)
                             longfile_entry.parent_inode = inode.index
                             if longfile_entry.long_file_inumber in self.long_names_map.keys():
                                 long_dir_entries.append(longfile_entry)
                             continue
-                        print(entry)
+                        #print(entry)
                         entry.parent_inode = inode.index
                         dir_entries.append(entry)
                         
@@ -414,6 +415,7 @@ class QNX6Parser():
                         inode_obj = iNode(chunk)
                         inode_obj.index = inode_index
                         if inode_obj.status not in (1, 2, 3):
+                            inode_index += 1
                             continue
                         inodes.append(inode_obj)
                         inode_index += 1
@@ -421,6 +423,7 @@ class QNX6Parser():
                         inode_index += 1
                 else:
                     inode_index += 1
+        print(f"Amount of inodes indexed={inode_index} and amount of inodes in superblock={self.superblock.num_of_inodes}")
         print(f"Amount of pointers invalid are {counter}")
         return inodes
     
@@ -453,6 +456,9 @@ class QNX6Parser():
                     print(f"inode_number={entry.inode_number} long file number={entry.long_file_inumber}")
                     # if entry.name == "." or entry.name == "..":
                     #     continue
+                    entry2 = DirEntry(chunk)
+                    entry2.parent_inode = inode_id
+                    print(f"file name={entry2.name} : parent_id={entry2.parent_inode} : inode_number={entry2.inode_number}")
                     file_names.append(entry)
                     self.parse_specific_inodes(file_names, entry.inode_number, inode_map, offset, counter)
             # for i in range(0, block_size, inode_size):
@@ -474,7 +480,8 @@ class QNX6Parser():
 
 # file_path = r"E:\Interns Infotainment\Images\Chrysler - QNX\VP4R\image_2\24-2654 SanDisk 16GB.bin"
 # file_path2 = r"E:\Interns Infotainment\Images\Chrysler - QNX\VP4R\image_1\24-2652 SanDisk 32GB.bin"
-# test = QNX6Parser(file_path2)
-# test.parseQNX6()
+file_path3 = r"E:\Interns Infotainment\Images\Ford\image_2\\SanDisk SDINBDG4-32G"
+test = QNX6Parser(file_path3)
+test.parseQNX6()
 
         
