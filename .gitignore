@@ -4,4 +4,6 @@ directories_output.txt
 inodes_output.txt
 long_directories_output.txt
 long_inodes_output.txt
+error.log
+notes.txt
 __pycache__

@@ -135,13 +135,9 @@ class QNX6Parser():
                 f.write(repr(inode))
                 f.write("\n\n")
                         
-        # Create map of dirs and files
         self.inodes_map = self.build_inode_map(inodes)
-        # print(self.dir_map)
         
-        #self.preorder_traversal(self.inodes_map, inodes[0], superblock_end_offset)
         name_list = []
-        #self.parse_specific_inodes(name_list, 96003, self.inodes_map, superblock_end_offset, 0)
         print(name_list)
         long_names = self.parse_inodes(self.superblock, self.superblock.root_node_longfilename, superblock_endoffset)
         self.long_names_map = self.build_inode_map(long_names)
@@ -176,17 +172,6 @@ class QNX6Parser():
             if inode:
                 file = File(dir, inode, self.f_stream, self.superblock.block_size, superblock_endoffset)
                 self.files.append(file)
-        
-        # print(f"Amount of files processed {len(self.files)}")
-        # for file in self.files:
-        #     print(file)
-        #     if file.filename == "proj_ctrl":
-        #         print(file.file_data)
-        #     else:
-        #         print("File does not exist")
-                
-        #self.parse_specific_inodes(inodes, 24839, self.inodes_map, superblock_endoffset, 2)
-        #self.construct_files(self.files)
                 
         self.long_files = []
         for dir in long_dirs:
@@ -246,22 +231,6 @@ class QNX6Parser():
         #print(file_map)
         #self.construct_files(self.long_files, combined_map)
         
-        
-        self.log_error("HI")
-        
-        # counter = 0
-        # for longfile in self.long_files:
-        #     print(f"filename={longfile.filename}")
-        #     print(longfile)
-        #     if longfile.filename == "vp4r_system_activity_record.csv":
-        #         print(longfile.file_data)
-        #     else:
-        #         print("File data not viewed")
-        # print(f"Amount of long files processed {len(self.long_files)}")
-        
-        
-        
-        #self.parse_specific_inodes(inodes, 247, self.inodes_map, superblock_endoffset, 2)
         
     def construct_files(self, extraction_path, files: list, file_map):
         paths = {}
@@ -485,53 +454,6 @@ class QNX6Parser():
         print(f"Amount of inodes indexed={inode_index} and amount of inodes in superblock={self.superblock.num_of_inodes}")
         print(f"Amount of pointers invalid are {counter}")
         return inodes
-    
-    def parse_specific_inodes(self, file_names: list, inode_id, inode_map, offset, counter):
-        counter += 1
-        if counter > 3:
-            return
-        inode = inode_map[inode_id]
-        if (inode.mode & 0xF000) == 0x4000:
-            print("Type is Directory")
-        elif (inode.mode & 0xF000) == 0x8000:
-            print("Type is File")
-        else:
-            print("Other")
-        inode_size = 128
-        block_size  = self.superblock.block_size
-        print(f"Inode {inode.index}: status={inode.status}")
-        pointers = inode.blockpointer_array
-        for ptr in pointers:
-            print(f"Looking at pointer {ptr}")
-            ptr_offset = ptr * block_size + offset
-            if ptr in (0, 0xFFFFFFFF):
-                continue
-            self.f_stream.seek(ptr_offset)
-            block_data = self.f_stream.read(block_size)
-            for i in range(0, block_size, 32):
-                chunk = block_data[i:i+32]
-                if chunk.strip(b'\x00'):
-                    entry = LongDirEntry(chunk)
-                    print(f"inode_number={entry.inode_number} long file number={entry.long_file_inumber}")
-                    # if entry.name == "." or entry.name == "..":
-                    #     continue
-                    entry2 = DirEntry(chunk)
-                    entry2.parent_inode = inode_id
-                    print(f"file name={entry2.name} : parent_id={entry2.parent_inode} : inode_number={entry2.inode_number}")
-                    file_names.append(entry)
-                    self.parse_specific_inodes(file_names, entry.inode_number, inode_map, offset, counter)
-            # for i in range(0, block_size, inode_size):
-            #     chunk = block_data[i:i+inode_size]
-            #     if chunk.strip(b'\x00'):
-            #         new_inode = iNode(chunk)
-            #         inode_status = new_inode.status
-            #         print(f"status={new_inode.status}")
-            #         if inode_status == 1:
-            #             print("Directory Found")
-            #         if inode_status == 3:
-            #             print("Normal File Found")
-            #         else:
-            #             print("Unknown")
 
     def log_error(self, err_msg: str, status=2):
         if status == 1:
@@ -544,10 +466,5 @@ class QNX6Parser():
     def close_stream(self):
         self.f_stream.close()
 
-#file_path = r"E:\Interns Infotainment\Images\Chrysler - QNX\VP4R\image_2\24-2654 SanDisk 16GB.bin"
-# file_path2 = r"E:\Interns Infotainment\Images\Chrysler - QNX\VP4R\image_1\24-2652 SanDisk 32GB.bin"
-# file_path3 = r"E:\Interns Infotainment\Images\Ford\image_2\\SanDisk SDINBDG4-32G"
-# test = QNX6Parser(file_path3)
-# test.parseQNX6()
 
         
