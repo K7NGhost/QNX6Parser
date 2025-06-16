@@ -6,16 +6,20 @@ from models.inode import iNode
 
 
 class File():
-    def __init__(self, directory: DirEntry, inode: iNode, f_stream: BufferedReader, blocksize, offset):
+    def __init__(self, directory, inode: iNode, f_stream: BufferedReader, blocksize, offset):
         self.__dir_entry = directory
         self.__inode = inode
         self.__block_size = blocksize
         self.__f_stream = f_stream
         self.__superblock_endoffset = offset
         
-        self.parent_id = self.__dir_entry.parent_inode
+        if self.__dir_entry:
+            self.parent_id = self.__dir_entry.parent_inode
+            self.filename = self.__dir_entry.name
+        else:
+            self.parent_id = None
+            self.filename = "deleted_" + str(self.__inode.index)
         self.file_id = self.__inode.index
-        self.filename = self.__dir_entry.name
         self.file_size = self.__inode.size
         self.created_time = self.__inode.ctime
         self.modified_time = self.__inode.mtime
