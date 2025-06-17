@@ -20,13 +20,22 @@ from models.ebr import EBR
 from utils import GPT_SIGNATURE, SUPERBLOCK_SIZE, parse_extended_partition
 
 class QNX6Parser():
-    def __init__(self, file_path):
-        super().__init__
+    def __init__(self, file_path, output_dir):
+        super().__init__()
+        self._progress_callback = None
         self.file_path = file_path
         self.f_stream = open(self.file_path, "rb")
         self.superblock = None
-        self.root_folder = "extracted"
+        self.root_folder = os.path.join(output_dir, "extracted")
+        print(self.root_folder)
         self.extraction_path = ""
+    
+    def set_progress_callback(self, callback):
+        self._progress_callback = callback
+    
+    def _report(self, step, total):
+        if self._progress_callback:
+            self._progress_callback(step, total)
 
     def get_all_partitions(self):
         partitions = []
@@ -90,6 +99,9 @@ class QNX6Parser():
             self.extraction_path = os.path.join(self.root_folder, partition_string)
             self.parse_partition(partitions[index])
             print("=" * 50)
+            if self._progress_callback:
+                self._report(index+1, len(partitions))
+        print("Done!!!")
 
     def parse_partition(self, partition: Partition):
         start_sector = partition.get_start_lba()
