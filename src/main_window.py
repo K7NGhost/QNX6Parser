@@ -101,6 +101,12 @@ class MainWindow(QWidget):
         if not (self.file_path and self.output_dir):
             QMessageBox.critical(self, "Error", "Select file and destination.")
             return
+        
+        worker = ParserWorker(self.file_path, self.output_dir)
+        worker.signals.finished.connect(self.thread_complete)
+        worker.signals.progress.connect(self.progress_dialog.setValue)
+        
+        self.threadpool.start(worker)
 
 
             

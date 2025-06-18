@@ -5,6 +5,7 @@ from datetime import datetime
 from collections import defaultdict
 import re
 import string
+import time
 
 from models.dir_entry import DirEntry
 from models.file import File
@@ -29,6 +30,13 @@ class QNX6Parser():
         self.root_folder = os.path.join(output_dir, "extracted")
         print(self.root_folder)
         self.extraction_path = ""
+        
+        # Progress Variables
+        self.per_partition = 0
+        self.relative_per_inode = 0
+        self.overall_progress = 0
+        self.partition_index = 0
+        self.inode_counter = 0
     
     def set_progress_callback(self, callback):
         self._progress_callback = callback
@@ -94,16 +102,22 @@ class QNX6Parser():
         self.log_error("", 1)
         partitions = self.get_all_partitions()
         for index in range(0, len(partitions)):
+            self.per_partition = 100 / len(partitions) # Progress bar
             print(partitions[index])
             partition_string = f"partition_{index+1}"
             self.extraction_path = os.path.join(self.root_folder, partition_string)
             self.parse_partition(partitions[index])
             print("=" * 50)
-            if self._progress_callback:
-                self._report(index+1, len(partitions))
+            
+            # Progress Stuff
+            self.inode_counter = 0
+            # if self._progress_callback:
+            #     self._report(index+1, len(partitions))
+        self._report(100, 100)
         print("Done!!!")
 
     def parse_partition(self, partition: Partition):
+        
         start_sector = partition.get_start_lba()
         offset_into_partition = 16
         target_sector = start_sector + offset_into_partition
@@ -139,7 +153,8 @@ class QNX6Parser():
             self.log_error(e)
         
         
-
+        # Get All iNodes
+        start = time.perf_counter()
         inodes = self.parse_inodes(self.superblock, self.superblock.root_node_inode, superblock_endoffset)        
         print(f"Num of iNodes: {len(inodes)}")
         with open("inodes_output.txt", "w", encoding="utf-8") as f:
@@ -148,9 +163,14 @@ class QNX6Parser():
                 f.write("\n\n")
                         
         self.inodes_map = self.build_inode_map(inodes)
+        end = time.perf_counter()
+        print(f"Getting all inodes took {end - start:.4f} seconds")
+        
+        self.relative_per_inode = self.per_partition / len(inodes)  # Progress bar
         
         name_list = []
         print(name_list)
+        start = time.perf_counter()
         long_names = self.parse_inodes(self.superblock, self.superblock.root_node_longfilename, superblock_endoffset)
         self.long_names_map = self.build_inode_map(long_names)
         print(f"Num of long iNodes: {len(long_names)}")
@@ -158,7 +178,11 @@ class QNX6Parser():
             for long_inode in long_names:
                 f.write(repr(f"index={long_inode.index} name={long_inode.name}"))
                 f.write("\n")
+        end = time.perf_counter()
+        print(f"Getting all long inodes took {end - start:.4f} seconds")
         
+        
+        start = time.perf_counter()
         directories, long_dirs = self.parse_dir_entries(inodes, superblock_endoffset)
         print(f"Num of directories {len(directories)}")
         with open("directories_output.txt", "w", encoding="utf-8") as f:
@@ -169,6 +193,8 @@ class QNX6Parser():
             for directory in long_dirs:
                 f.write(repr(directory))
                 f.write("\n")
+        end = time.perf_counter()
+        print(f"Getting all directories took {end - start:.4f} seconds")
                 
         self.dir_map = self.build_dir_map(directories)
         
@@ -200,17 +226,23 @@ class QNX6Parser():
                 if len(long_file.filename) < 510:    
                     self.long_files.append(long_file)
 
+        start = time.perf_counter()
         file_map = {file.file_id: file for file in self.files}
         long_file_map = {file.file_id: file for file in self.long_files}
         combined_map = long_file_map | file_map
         combined_list = self.files + self.long_files
         self.construct_files(self.extraction_path, combined_list, combined_map)
+        end = time.perf_counter()
+        print(f"Constructing all files took {end - start:.4f} seconds")
         
+        start = time.perf_counter()
         deleted_files = self.get_deleted(inodes, superblock_endoffset)
         deleted_map = {file.file_id: file for file in deleted_files}
         deleted_extraction_path = os.path.join(self.extraction_path, "deleted")
         self.construct_files(deleted_extraction_path, deleted_files, deleted_map)
         print(deleted_files)
+        end = time.perf_counter()
+        print(f"Constructing all deleted files took {end - start:.4f} seconds")
         
         visited = set()
         full_list = combined_list + deleted_files
@@ -240,21 +272,32 @@ class QNX6Parser():
                 print(inode)
         print(f"total inodes that are useful: {len(inodes)}")
         print(f"total inodes visited: {len(visited)}")
+        print(f"Counter is {self.inode_counter}")
         #print(file_map)
         #self.construct_files(self.long_files, combined_map)
         
         
     def construct_files(self, extraction_path, files: list, file_map):
         paths = {}
+        start = time.perf_counter()
         for f in files:
             p = self.build_paths(file_map, f)
+            
             if p:
                 paths[f.file_id] = p
         #print(paths.keys())
+        end = time.perf_counter()
+        print(f"build paths for all inodes took {end - start:.4f} seconds")
             
         # Construct all files
         for fid, path in paths.items():
             file = file_map[fid]
+            
+            
+            self.overall_progress = self.overall_progress + self.relative_per_inode
+            self.inode_counter += 1
+            if self._progress_callback:     
+                self._report(float(self.overall_progress), 100)
             #print(f"path={path}")
             full_path = os.path.join(extraction_path, path)
             # print(f"ID {fid}: {full_path}")
