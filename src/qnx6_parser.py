@@ -29,7 +29,10 @@ class QNX6Parser():
         self.superblock = None
         self.root_folder = os.path.join(output_dir, "extracted")
         print(self.root_folder)
+        self.partition_path = ""
         self.extraction_path = ""
+        
+        self.should_parse_second_superblock = False
         
         # Progress Variables
         self.per_partition = 0
@@ -105,7 +108,7 @@ class QNX6Parser():
             self.per_partition = 100 / len(partitions) # Progress bar
             print(partitions[index])
             partition_string = f"partition_{index+1}"
-            self.extraction_path = os.path.join(self.root_folder, partition_string)
+            self.partition_path = os.path.join(self.root_folder, partition_string)
             self.parse_partition(partitions[index])
             print("=" * 50)
             
@@ -137,144 +140,163 @@ class QNX6Parser():
             print("Not a QNX6 Partition")
             return
         
-        try:
+        
             
-            second_superblock_offset = superblock_endoffset + (self.superblock.block_size * self.superblock.num_of_blocks)
-            self.f_stream.seek(second_superblock_offset)
-            second_superblock_data = self.f_stream.read(SUPERBLOCK_SIZE)
-            print(f"Byte Offset: {second_superblock_offset} (0x{second_superblock_offset:X})")
-            self.second_superblock = SuperBlock(second_superblock_data)
-            print(self.second_superblock)
-            print(f"inodes: {self.second_superblock.root_node_inode}")
-            print(f"bitmap: {self.second_superblock.root_node_bitmap}")
-            print(f"longfilename: {self.second_superblock.root_node_longfilename}")
-            second_superblock_endoffset = second_superblock_offset + SUPERBLOCK_SIZE
+        def parse_all_Inodes(superblock: SuperBlock, offset):
+            superblock_endoffset = offset
+            # Get All iNodes
+            start = time.perf_counter()
+            inodes = self.parse_inodes(superblock, superblock.root_node_inode, superblock_endoffset)        
+            print(f"Num of iNodes: {len(inodes)}")
+            with open("inodes_output.txt", "w", encoding="utf-8") as f:
+                for inode in inodes:
+                    f.write(repr(inode))
+                    f.write("\n\n")
+                        
+            self.inodes_map = self.build_inode_map(inodes)
+            end = time.perf_counter()
+            print(f"Getting all inodes took {end - start:.4f} seconds")
+
+            if self.should_parse_second_superblock:
+                self.relative_per_inode = self.per_partition / (len(inodes) * 2)
+            else:     
+                self.relative_per_inode = self.per_partition / len(inodes)  # Progress bar
+        
+            name_list = []
+            print(name_list)
+            start = time.perf_counter()
+            long_names = self.parse_inodes(superblock, superblock.root_node_longfilename, superblock_endoffset)
+            self.long_names_map = self.build_inode_map(long_names)
+            print(f"Num of long iNodes: {len(long_names)}")
+            with open("long_inodes_output.txt", "w", encoding="utf-8") as f:
+                for long_inode in long_names:
+                    f.write(repr(f"index={long_inode.index} name={long_inode.name}"))
+                    f.write("\n")
+            end = time.perf_counter()
+            print(f"Getting all long inodes took {end - start:.4f} seconds")
+        
+        
+            start = time.perf_counter()
+            directories, long_dirs = self.parse_dir_entries(inodes, superblock_endoffset)
+            print(f"Num of directories {len(directories)}")
+            with open("directories_output.txt", "w", encoding="utf-8") as f:
+                for directory in directories:
+                    f.write(repr(directory))
+                    f.write("\n")
+            with open("long_directories_output.txt", "w", encoding="utf-8") as f:
+                for directory in long_dirs:
+                    f.write(repr(directory))
+                    f.write("\n")
+            end = time.perf_counter()
+            print(f"Getting all directories took {end - start:.4f} seconds")
+                
+            self.dir_map = self.build_dir_map(directories)
+        
+            self.files = []
+            for dir in directories:
+                if dir.inode_number == 0:
+                    continue
+                try:
+                    inode = self.inodes_map[dir.inode_number]
+                except Exception as e:
+                    self.log_error(e)
+                    continue
+                if inode:
+                    file = File(dir, inode, self.f_stream, superblock.block_size, superblock_endoffset)
+                    self.files.append(file)
+                
+            self.long_files = []
+            for dir in long_dirs:
+                if dir.inode_number == 0:
+                    continue
+                try:
+                    inode = self.inodes_map[dir.inode_number]
+                    long_inode = self.long_names_map[dir.long_file_inumber]
+                except Exception as e:
+                    self.log_error(e)
+                    print("Failed Here")
+                if inode and long_inode:
+                    long_file = LongFile(dir, inode, long_inode, self.f_stream, superblock.block_size, superblock_endoffset)
+                    if len(long_file.filename) < 510:    
+                        self.long_files.append(long_file)
+
+            start = time.perf_counter()
+            file_map = {file.file_id: file for file in self.files}
+            long_file_map = {file.file_id: file for file in self.long_files}
+            combined_map = long_file_map | file_map
+            combined_list = self.files + self.long_files
+            self.construct_files(self.extraction_path, combined_list, combined_map)
+            end = time.perf_counter()
+            print(f"Constructing all files took {end - start:.4f} seconds")
+        
+            start = time.perf_counter()
+            deleted_files = self.get_deleted(inodes, superblock_endoffset)
+            deleted_map = {file.file_id: file for file in deleted_files}
+            deleted_extraction_path = os.path.join(self.extraction_path, "deleted")
+            self.construct_files(deleted_extraction_path, deleted_files, deleted_map)
+            print(deleted_files)
+            end = time.perf_counter()
+            print(f"Constructing all deleted files took {end - start:.4f} seconds")
+        
+            visited = set()
+            full_list = combined_list + deleted_files
+            for file in full_list:
+                if file.file_id not in visited:
+                    visited.add(file.file_id)
+        
+            unknown_inodes = []
+            unknown_files = []
+            for inode in inodes:
+                if inode.index == 1:
+                    continue
+                if inode.index not in visited:
+                    if inode.status == 3:
+                        unknown_file = File(None, inode, self.f_stream, superblock.block_size, superblock_endoffset)
+                        unknown_files.append(unknown_file)
+                        visited.add(unknown_file.file_id)
+                        unknown_inodes.append(inode)
+            unknown_map = {file.file_id: file for file in unknown_files}
+            unknown_extraction_path = os.path.join(self.extraction_path, "unknown")
+            self.construct_files(unknown_extraction_path, unknown_files, unknown_map)
+            #print(unknown_inodes)
+            #print(len(unknown_inodes))
+            print("=" * 50)
+            for inode in inodes:
+                if inode.index not in visited:
+                    print(inode)
+            print(f"total inodes that are useful: {len(inodes)}")
+            print(f"total inodes visited: {len(visited)}")
+            print(f"Counter is {self.inode_counter}")
+            #print(file_map)
+            #self.construct_files(self.long_files, combined_map)
+        
+        if self.should_parse_second_superblock:
+            self.extraction_path = os.path.join(self.partition_path, "superblock1")
+        else:
+            self.extraction_path = self.partition_path
+        parse_all_Inodes(self.superblock, superblock_endoffset)
+        
+        try:
+            if self.should_parse_second_superblock:
+                
+                second_superblock_offset = superblock_endoffset + (self.superblock.block_size * self.superblock.num_of_blocks)
+                self.f_stream.seek(second_superblock_offset)
+                second_superblock_data = self.f_stream.read(SUPERBLOCK_SIZE)
+                print(f"Byte Offset: {second_superblock_offset} (0x{second_superblock_offset:X})")
+                self.second_superblock = SuperBlock(second_superblock_data)
+                print(self.second_superblock)
+                print(f"inodes: {self.second_superblock.root_node_inode}")
+                print(f"bitmap: {self.second_superblock.root_node_bitmap}")
+                print(f"longfilename: {self.second_superblock.root_node_longfilename}")
+                if self.second_superblock.magic != 0x68191122:
+                    print("Not a QNX6 Partition")
+                    return
+                
+                self.extraction_path = os.path.join(self.partition_path, "superblock2")
+                parse_all_Inodes(self.second_superblock, superblock_endoffset)
+                second_superblock_endoffset = second_superblock_offset + SUPERBLOCK_SIZE
         except Exception as e:
             self.log_error(e)
-        
-        
-        # Get All iNodes
-        start = time.perf_counter()
-        inodes = self.parse_inodes(self.superblock, self.superblock.root_node_inode, superblock_endoffset)        
-        print(f"Num of iNodes: {len(inodes)}")
-        with open("inodes_output.txt", "w", encoding="utf-8") as f:
-            for inode in inodes:
-                f.write(repr(inode))
-                f.write("\n\n")
-                        
-        self.inodes_map = self.build_inode_map(inodes)
-        end = time.perf_counter()
-        print(f"Getting all inodes took {end - start:.4f} seconds")
-        
-        self.relative_per_inode = self.per_partition / len(inodes)  # Progress bar
-        
-        name_list = []
-        print(name_list)
-        start = time.perf_counter()
-        long_names = self.parse_inodes(self.superblock, self.superblock.root_node_longfilename, superblock_endoffset)
-        self.long_names_map = self.build_inode_map(long_names)
-        print(f"Num of long iNodes: {len(long_names)}")
-        with open("long_inodes_output.txt", "w", encoding="utf-8") as f:
-            for long_inode in long_names:
-                f.write(repr(f"index={long_inode.index} name={long_inode.name}"))
-                f.write("\n")
-        end = time.perf_counter()
-        print(f"Getting all long inodes took {end - start:.4f} seconds")
-        
-        
-        start = time.perf_counter()
-        directories, long_dirs = self.parse_dir_entries(inodes, superblock_endoffset)
-        print(f"Num of directories {len(directories)}")
-        with open("directories_output.txt", "w", encoding="utf-8") as f:
-            for directory in directories:
-                f.write(repr(directory))
-                f.write("\n")
-        with open("long_directories_output.txt", "w", encoding="utf-8") as f:
-            for directory in long_dirs:
-                f.write(repr(directory))
-                f.write("\n")
-        end = time.perf_counter()
-        print(f"Getting all directories took {end - start:.4f} seconds")
-                
-        self.dir_map = self.build_dir_map(directories)
-        
-        self.files = []
-        for dir in directories:
-            if dir.inode_number == 0:
-                continue
-            try:
-                inode = self.inodes_map[dir.inode_number]
-            except Exception as e:
-                self.log_error(e)
-                continue
-            if inode:
-                file = File(dir, inode, self.f_stream, self.superblock.block_size, superblock_endoffset)
-                self.files.append(file)
-                
-        self.long_files = []
-        for dir in long_dirs:
-            if dir.inode_number == 0:
-                continue
-            try:
-                inode = self.inodes_map[dir.inode_number]
-                long_inode = self.long_names_map[dir.long_file_inumber]
-            except Exception as e:
-                self.log_error(e)
-                print("Failed Here")
-            if inode and long_inode:
-                long_file = LongFile(dir, inode, long_inode, self.f_stream, self.superblock.block_size, superblock_endoffset)
-                if len(long_file.filename) < 510:    
-                    self.long_files.append(long_file)
-
-        start = time.perf_counter()
-        file_map = {file.file_id: file for file in self.files}
-        long_file_map = {file.file_id: file for file in self.long_files}
-        combined_map = long_file_map | file_map
-        combined_list = self.files + self.long_files
-        self.construct_files(self.extraction_path, combined_list, combined_map)
-        end = time.perf_counter()
-        print(f"Constructing all files took {end - start:.4f} seconds")
-        
-        start = time.perf_counter()
-        deleted_files = self.get_deleted(inodes, superblock_endoffset)
-        deleted_map = {file.file_id: file for file in deleted_files}
-        deleted_extraction_path = os.path.join(self.extraction_path, "deleted")
-        self.construct_files(deleted_extraction_path, deleted_files, deleted_map)
-        print(deleted_files)
-        end = time.perf_counter()
-        print(f"Constructing all deleted files took {end - start:.4f} seconds")
-        
-        visited = set()
-        full_list = combined_list + deleted_files
-        for file in full_list:
-            if file.file_id not in visited:
-                visited.add(file.file_id)
-        
-        unknown_inodes = []
-        unknown_files = []
-        for inode in inodes:
-            if inode.index == 1:
-                continue
-            if inode.index not in visited:
-                if inode.status == 3:
-                    unknown_file = File(None, inode, self.f_stream, self.superblock.block_size, superblock_endoffset)
-                    unknown_files.append(unknown_file)
-                    visited.add(unknown_file.file_id)
-                    unknown_inodes.append(inode)
-        unknown_map = {file.file_id: file for file in unknown_files}
-        unknown_extraction_path = os.path.join(self.extraction_path, "unknown")
-        self.construct_files(unknown_extraction_path, unknown_files, unknown_map)
-        #print(unknown_inodes)
-        #print(len(unknown_inodes))
-        print("=" * 50)
-        for inode in inodes:
-            if inode.index not in visited:
-                print(inode)
-        print(f"total inodes that are useful: {len(inodes)}")
-        print(f"total inodes visited: {len(visited)}")
-        print(f"Counter is {self.inode_counter}")
-        #print(file_map)
-        #self.construct_files(self.long_files, combined_map)
         
         
     def construct_files(self, extraction_path, files: list, file_map):

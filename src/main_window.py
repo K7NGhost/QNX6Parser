@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QPushButton, QFileDialog, 
-                               QProgressDialog, QMessageBox)
+                               QProgressDialog, QMessageBox, QCheckBox)
 from PySide6.QtCore import (Qt, QThread, Signal, QObject, QThreadPool)
 from qnx6_parser import QNX6Parser
 from parser_worker import ParserWorker
@@ -45,11 +45,15 @@ class MainWindow(QWidget):
         self.analyze_button.clicked.connect(lambda: self.parse_image())
         upper_layout.addWidget(self.analyze_button)
         
-        self.test_parse_button = QPushButton()
-        self.test_parse_button.setText("Test Parse Image")
-        self.test_parse_button.setMinimumWidth(150)
-        self.test_parse_button.clicked.connect(lambda: self.test_parse_image())
-        upper_layout.addWidget(self.test_parse_button)
+        self.second_sb_checkbox = QCheckBox("Parse Second Superblock")
+        self.second_sb_checkbox.setChecked(False)
+        upper_layout.addWidget(self.second_sb_checkbox)
+        
+        # self.test_parse_button = QPushButton()
+        # self.test_parse_button.setText("Test Parse Image")
+        # self.test_parse_button.setMinimumWidth(150)
+        # self.test_parse_button.clicked.connect(lambda: self.test_parse_image())
+        # upper_layout.addWidget(self.test_parse_button)
         
         lower_bar_container = QWidget()
         lower_bar_container.setObjectName("container")
@@ -90,11 +94,16 @@ class MainWindow(QWidget):
         input_label = r""
         output_label = r""
         
-        worker = ParserWorker(input_label, output_label)
+        should_parse_second = self.second_sb_checkbox.isChecked()
+        worker = ParserWorker(input_label, output_label, should_parse_second)
         worker.signals.finished.connect(self.thread_complete)
         worker.signals.progress.connect(self.progress_dialog.setValue)
         
         self.threadpool.start(worker)
+        
+        # parser = QNX6Parser(input_label, output_label)
+        # parser.should_parse_second_superblock = self.second_sb_checkbox.isChecked()
+        # parser.parseQNX6()
         
 
     def parse_image(self):
@@ -102,7 +111,8 @@ class MainWindow(QWidget):
             QMessageBox.critical(self, "Error", "Select file and destination.")
             return
         
-        worker = ParserWorker(self.file_path, self.output_dir)
+        should_parse_second = self.second_sb_checkbox.isChecked()
+        worker = ParserWorker(self.file_path, self.output_dir, should_parse_second)
         worker.signals.finished.connect(self.thread_complete)
         worker.signals.progress.connect(self.progress_dialog.setValue)
         
