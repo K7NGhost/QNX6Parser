@@ -43,6 +43,7 @@ python src/main.py
     - Valid files and folders
     - **Deleted inodes that still have recoverable data**
 - Reconstructs everything in the original hierarchical structure
+- Be sure to place the exe in a folder, as it generates logging text files in the current directory the exe is located at
 
 ## 🧠 Author
 
